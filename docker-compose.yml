@@ -1,0 +1,189 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: cloudplatform-postgres
+    environment:
+      POSTGRES_DB: cloudplatform
+      POSTGRES_USER: cloudplatform
+      POSTGRES_PASSWORD: cloudplatform_dev_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudplatform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloudplatform-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: cloudplatform-redis
+    command: redis-server --requirepass cloudplatform_redis_password --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloudplatform-network
+
+  # RabbitMQ (Message Queue for Celery)
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: cloudplatform-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: cloudplatform
+      RABBITMQ_DEFAULT_PASS: cloudplatform_rabbit_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - cloudplatform-network
+
+  # Backend API
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudplatform-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=debug
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - cloudplatform-network
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudplatform-celery-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - cloudplatform-network
+
+  # Celery Beat (Periodic Tasks)
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudplatform-celery-beat
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - cloudplatform-network
+
+  # Flower (Celery monitoring)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudplatform-flower
+    command: celery -A app.tasks.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
+    depends_on:
+      - rabbitmq
+      - redis
+    networks:
+      - cloudplatform-network
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: cloudplatform-frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+    depends_on:
+      - api
+    networks:
+      - cloudplatform-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+
+networks:
+  cloudplatform-network:
+    driver: bridge
