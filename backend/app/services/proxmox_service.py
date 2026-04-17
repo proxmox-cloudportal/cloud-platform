@@ -66,6 +66,9 @@ class ProxmoxService:
 
             # Use token authentication if available, otherwise password
             if token_name and token_value:
+                # Strip "user!" prefix if user pasted the full Proxmox token ID (e.g. "root@pam!theanh")
+                if "!" in token_name:
+                    token_name = token_name.split("!", 1)[1]
                 self._proxmox = ProxmoxAPI(
                     host,
                     user=user,
@@ -103,14 +106,22 @@ class ProxmoxService:
 
     def get_nodes(self) -> List[Dict[str, Any]]:
         """
-        Get list of nodes in the cluster.
-
-        Returns:
-            List of node information dictionaries
+        Get list of nodes enriched with per-node CPU/memory status.
+        proxmox.nodes.get() only returns basic info; maxcpu/maxmem require
+        a separate GET /nodes/{node}/status call for each online node.
         """
         try:
             proxmox = self._get_connection()
-            return proxmox.nodes.get()
+            nodes = proxmox.nodes.get()
+            for node in nodes:
+                if node.get("status") == "online":
+                    try:
+                        status = proxmox.nodes(node["node"]).status.get()
+                        node["maxcpu"] = status.get("cpuinfo", {}).get("cpus", 0)
+                        node["maxmem"] = status.get("memory", {}).get("total", 0)
+                    except Exception as e:
+                        logger.warning(f"Failed to get status for node {node['node']}: {e}")
+            return nodes
         except Exception as e:
             logger.error(f"Failed to get nodes: {e}")
             return []

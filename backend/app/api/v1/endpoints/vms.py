@@ -97,7 +97,7 @@ async def provision_vm_task(
 @router.get("", response_model=VMListResponse)
 async def list_vms(
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=500),
     status: Optional[str] = Query(None, description="Filter by status"),
     search: Optional[str] = Query(None, description="Search by name"),
     org_context: OrgContext = Depends(RequirePermission(Permission.VM_READ)),

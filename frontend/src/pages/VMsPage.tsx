@@ -10,13 +10,14 @@ export default function VMsPage() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [nodeFilter, setNodeFilter] = useState('')
   const queryClient = useQueryClient()
   const { currentOrganization } = useAuthStore()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['vms', page, search, statusFilter, currentOrganization?.id],
-    queryFn: () => vmsApi.list({ page, per_page: 20, search, status: statusFilter || undefined }),
-    enabled: !!currentOrganization, // Only run query when organization is selected
+    queryFn: () => vmsApi.list({ page, per_page: 200, search, status: statusFilter || undefined }),
+    enabled: !!currentOrganization,
   })
 
   const startMutation = useMutation({
@@ -69,6 +70,9 @@ export default function VMsPage() {
       alert('Failed to open console: ' + (error.response?.data?.detail || error.message))
     },
   })
+
+  const allQemuVMs = (data?.data ?? []).filter((vm: any) => vm.vm_type === 'qemu')
+  const nodes = [...new Set(allQemuVMs.map((vm: any) => vm.proxmox_node).filter(Boolean))].sort() as string[]
 
   // Auto-sync provisioning VMs when data loads
   useEffect(() => {
@@ -166,7 +170,7 @@ export default function VMsPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by name..."
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
               />
             </div>
             <div>
@@ -174,7 +178,7 @@ export default function VMsPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
               >
                 <option value="">All Statuses</option>
                 <option value="running">Running</option>
@@ -183,21 +187,34 @@ export default function VMsPage() {
                 <option value="error">Error</option>
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Node</label>
+              <select
+                value={nodeFilter}
+                onChange={(e) => setNodeFilter(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
+              >
+                <option value="">All Nodes</option>
+                {nodes.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        {/* VMs List */}
+        {/* VMs / CT List grouped by node */}
         {isLoading ? (
           <div className="text-center py-12">
-            <div className="text-gray-600">Loading VMs...</div>
+            <div className="text-gray-600">Loading...</div>
           </div>
         ) : error ? (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             Failed to load VMs
           </div>
-        ) : data?.data?.length === 0 ? (
+        ) : allQemuVMs.length === 0 ? (
           <div className="bg-white shadow rounded-lg p-12 text-center">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No virtual machines</h3>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No virtual machines or containers</h3>
             <p className="text-gray-500 mb-4">Get started by creating your first VM.</p>
             <Link
               to="/vms/create"
@@ -208,124 +225,108 @@ export default function VMsPage() {
           </div>
         ) : (
           <>
-            <div className="bg-white shadow sm:rounded-lg">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Name
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Resources
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      IP Address
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cluster
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {data?.data?.map((vm: any) => (
-                    <tr key={vm.id}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
-                          <Link
-                            to={`/vms/${vm.id}`}
-                            className="text-sm font-medium text-indigo-600 hover:text-indigo-900"
-                          >
-                            {vm.name}
-                          </Link>
-                          {vm.hostname && (
-                            <div className="text-sm text-gray-500">{vm.hostname}</div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(
-                            vm.status
-                          )}`}
-                        >
-                          {vm.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {vm.cpu_cores} vCPU / {Math.round(vm.memory_mb / 1024)} GB RAM
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {vm.primary_ip_address || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {vm.proxmox_cluster.name}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex justify-end gap-3 items-center">
-                          {vm.status === 'provisioning' && (
-                            <button
-                              onClick={() => handleSync(vm.id)}
-                              disabled={syncMutation.isPending}
-                              className="inline-flex items-center px-2 py-1 text-blue-600 hover:text-blue-900 disabled:opacity-50"
-                              title="Refresh status from Proxmox"
-                            >
-                              <RefreshCw className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
-                            </button>
-                          )}
-                          {vm.status === 'stopped' && (
-                            <button
-                              onClick={() => handleStart(vm.id, vm.name)}
-                              disabled={startMutation.isPending}
-                              className="px-3 py-1 text-sm text-green-600 hover:text-green-900 disabled:opacity-50 font-medium"
-                            >
-                              Start
-                            </button>
-                          )}
-                          {vm.status === 'running' && (
-                            <>
-                              <button
-                                onClick={() => handleConsole(vm.id)}
-                                disabled={consoleMutation.isPending}
-                                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-900 disabled:opacity-50 font-medium"
-                              >
-                                Console
-                              </button>
-                              <button
-                                onClick={() => handleStop(vm.id, vm.name)}
-                                disabled={stopMutation.isPending}
-                                className="px-3 py-1 text-sm text-yellow-600 hover:text-yellow-900 disabled:opacity-50 font-medium"
-                              >
-                                Stop
-                              </button>
-                            </>
-                          )}
-                          <Link
-                            to={`/vms/${vm.id}`}
-                            className="px-3 py-1 text-sm text-indigo-600 hover:text-indigo-900 font-medium"
-                          >
-                            View
-                          </Link>
-                          <VMActionsMenu
-                            vmId={vm.id}
-                            vmName={vm.name}
-                            vmStatus={vm.status}
-                            onDelete={() => handleDelete(vm.id, vm.name)}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {Object.entries(
+              (nodeFilter ? allQemuVMs.filter((vm: any) => vm.proxmox_node === nodeFilter) : allQemuVMs)
+                .reduce((groups: Record<string, any[]>, vm: any) => {
+                  const node = vm.proxmox_node || 'unknown'
+                  if (!groups[node]) groups[node] = []
+                  groups[node].push(vm)
+                  return groups
+                }, {})
+            ).sort(([a], [b]) => a.localeCompare(b)).map(([node, vms]) => (
+              <div key={node} className="mb-6">
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <span className="text-sm font-semibold text-gray-700">{node}</span>
+                  <span className="text-xs text-gray-400">({vms.length} instance{vms.length !== 1 ? 's' : ''})</span>
+                </div>
+                <div className="bg-white shadow sm:rounded-lg">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resources</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP Address</th>
+                          <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {vms.map((vm: any) => (
+                          <tr key={vm.id}>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div>
+                                <Link to={`/vms/${vm.id}`} className="text-sm font-medium text-indigo-600 hover:text-indigo-900">
+                                  {vm.name}
+                                </Link>
+                                {vm.hostname && <div className="text-xs text-gray-400">{vm.hostname}</div>}
+                                <div className="text-xs text-gray-400">VMID: {vm.proxmox_vmid}</div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                vm.vm_type === 'lxc'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {vm.vm_type === 'lxc' ? 'CT' : 'VM'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(vm.status)}`}>
+                                {vm.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {vm.cpu_cores} vCPU / {Math.round(vm.memory_mb / 1024)} GB RAM
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {vm.primary_ip_address || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                              <div className="flex justify-end gap-3 items-center">
+                                {vm.status === 'provisioning' && (
+                                  <button onClick={() => handleSync(vm.id)} disabled={syncMutation.isPending}
+                                    className="inline-flex items-center px-2 py-1 text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                                    title="Refresh status from Proxmox">
+                                    <RefreshCw className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+                                  </button>
+                                )}
+                                {vm.status === 'stopped' && (
+                                  <button onClick={() => handleStart(vm.id, vm.name)} disabled={startMutation.isPending}
+                                    className="px-3 py-1 text-sm text-green-600 hover:text-green-900 disabled:opacity-50 font-medium">
+                                    Start
+                                  </button>
+                                )}
+                                {vm.status === 'running' && (
+                                  <>
+                                    {vm.vm_type === 'qemu' && (
+                                      <button onClick={() => handleConsole(vm.id)} disabled={consoleMutation.isPending}
+                                        className="px-3 py-1 text-sm text-blue-600 hover:text-blue-900 disabled:opacity-50 font-medium">
+                                        Console
+                                      </button>
+                                    )}
+                                    <button onClick={() => handleStop(vm.id, vm.name)} disabled={stopMutation.isPending}
+                                      className="px-3 py-1 text-sm text-yellow-600 hover:text-yellow-900 disabled:opacity-50 font-medium">
+                                      Stop
+                                    </button>
+                                  </>
+                                )}
+                                <Link to={`/vms/${vm.id}`} className="px-3 py-1 text-sm text-indigo-600 hover:text-indigo-900 font-medium">
+                                  View
+                                </Link>
+                                <VMActionsMenu vmId={vm.id} vmName={vm.name} vmStatus={vm.status} onDelete={() => handleDelete(vm.id, vm.name)} />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
+            ))}
 
             {/* Pagination */}
             {data && data.total_pages > 1 && (
