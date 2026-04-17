@@ -56,13 +56,21 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
   }'
 ```
 
-### 4. Login
+### 4. Grant Superadmin Privileges
+
+New accounts have no admin privileges by default. Grant superadmin access so you can manage clusters:
+
+```bash
+docker exec cloudplatform-api python make_superadmin.py admin@example.com
+```
+
+### 5. Login
 
 Now you can login at http://localhost:3000 with:
 - **Email**: admin@example.com
 - **Password**: ChangeMe123!
 
-### 5. Explore the Platform
+### 6. Explore the Platform
 
 - **Frontend Dashboard**: http://localhost:3000
 - **API Documentation**: http://localhost:8000/docs
