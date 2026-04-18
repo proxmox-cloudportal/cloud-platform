@@ -3,6 +3,8 @@ API endpoints for Proxmox Cluster management.
 """
 from typing import Optional
 from uuid import UUID
+import uuid as uuid_lib
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,8 @@ from sqlalchemy import select, func
 
 from app.db.session import get_db
 from app.models.proxmox_cluster import ProxmoxCluster
+from app.models.virtual_machine import VirtualMachine
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.proxmox_cluster import (
     ProxmoxClusterCreate,
@@ -332,3 +336,112 @@ async def sync_cluster_resources(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync cluster: {str(e)}"
         )
+
+
+@router.post("/{cluster_id}/sync-vms")
+async def sync_cluster_vms(
+    cluster_id: UUID,
+    current_user: User = Depends(get_current_superadmin),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Discover all VMs from Proxmox and upsert them into the portal DB.
+    VMs are assigned to the default organization. Only superadmins can run this.
+    """
+    result = await db.execute(
+        select(ProxmoxCluster).where(
+            ProxmoxCluster.id == str(cluster_id),
+            ProxmoxCluster.deleted_at.is_(None)
+        )
+    )
+    cluster = result.scalar_one_or_none()
+    if not cluster:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+
+    # Resolve default org
+    result = await db.execute(
+        select(Organization).where(
+            Organization.slug == "default",
+            Organization.deleted_at.is_(None)
+        )
+    )
+    default_org = result.scalar_one_or_none()
+    if not default_org:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No default organization found. Create one first."
+        )
+
+    proxmox = ProxmoxService(cluster=cluster)
+    nodes = proxmox.get_nodes()
+    if not nodes:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not reach any nodes in this cluster."
+        )
+
+    added = updated = 0
+
+    status_map = {"running": "running", "stopped": "stopped", "paused": "paused"}
+    proxmox_conn = proxmox._get_connection()
+
+    for node in nodes:
+        node_name = node.get("node")
+        if not node_name or node.get("status") != "online":
+            continue
+
+        # Fetch both QEMU VMs and LXC containers
+        resources: list[tuple[str, list]] = []
+        for vm_type, endpoint in [("qemu", proxmox_conn.nodes(node_name).qemu),
+                                   ("lxc", proxmox_conn.nodes(node_name).lxc)]:
+            try:
+                resources.append((vm_type, endpoint.get()))
+            except Exception:
+                continue
+
+        for vm_type, items in resources:
+            for vm_data in items:
+                vmid = vm_data.get("vmid")
+                if not vmid:
+                    continue
+
+                result = await db.execute(
+                    select(VirtualMachine).where(
+                        VirtualMachine.proxmox_cluster_id == str(cluster_id),
+                        VirtualMachine.proxmox_vmid == vmid,
+                        VirtualMachine.vm_type == vm_type,
+                        VirtualMachine.deleted_at.is_(None)
+                    )
+                )
+                existing = result.scalar_one_or_none()
+                portal_status = status_map.get(vm_data.get("status", "stopped"), "stopped")
+
+                if existing:
+                    existing.name = vm_data.get("name", existing.name)
+                    existing.cpu_cores = vm_data.get("cpus", existing.cpu_cores)
+                    existing.memory_mb = (vm_data.get("maxmem", 0) or 0) // (1024 * 1024)
+                    existing.status = portal_status
+                    existing.proxmox_node = node_name
+                    updated += 1
+                else:
+                    vm = VirtualMachine(
+                        id=str(uuid_lib.uuid4()),
+                        organization_id=default_org.id,
+                        owner_id=current_user.id,
+                        proxmox_cluster_id=str(cluster_id),
+                        proxmox_node=node_name,
+                        proxmox_vmid=vmid,
+                        vm_type=vm_type,
+                        name=vm_data.get("name", f"{vm_type}-{vmid}"),
+                        cpu_cores=vm_data.get("cpus", 1),
+                        cpu_sockets=1,
+                        memory_mb=(vm_data.get("maxmem", 0) or 0) // (1024 * 1024),
+                        status=portal_status,
+                        provisioned_at=datetime.utcnow(),
+                    )
+                    db.add(vm)
+                    added += 1
+
+    await db.commit()
+
+    return {"added": added, "updated": updated, "nodes_scanned": len(nodes)}

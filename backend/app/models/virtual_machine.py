@@ -33,6 +33,9 @@ class VirtualMachine(BaseModel):
         index=True
     )
 
+    # 'qemu' for VMs, 'lxc' for containers
+    vm_type: Mapped[str] = mapped_column(String(10), nullable=False, default="qemu", index=True)
+
     # VM identification
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     hostname: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

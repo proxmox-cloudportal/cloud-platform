@@ -153,6 +153,7 @@ class VMResponse(BaseModel):
     boot_order: Optional[str]
 
     # Proxmox
+    vm_type: str
     proxmox_vmid: int
     proxmox_node: Optional[str]
     proxmox_cluster: ProxmoxClusterInfo

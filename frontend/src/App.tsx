@@ -12,6 +12,7 @@ import OrganizationSettingsPage from './pages/OrganizationSettingsPage'
 import QuotaPage from './pages/QuotaPage'
 import ISOUploadPage from './pages/ISOUploadPage'
 import NetworksPage from './pages/NetworksPage'
+import ContainersPage from './pages/ContainersPage'
 
 function App() {
   const { isAuthenticated } = useAuthStore()
@@ -120,6 +121,18 @@ function App() {
           isAuthenticated ? (
             <Layout>
               <QuotaPage />
+            </Layout>
+          ) : (
+            <Navigate to="/login" />
+          )
+        }
+      />
+      <Route
+        path="/containers"
+        element={
+          isAuthenticated ? (
+            <Layout>
+              <ContainersPage />
             </Layout>
           ) : (
             <Navigate to="/login" />

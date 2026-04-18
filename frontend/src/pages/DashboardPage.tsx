@@ -1,11 +1,32 @@
 import { useQuery } from '@tanstack/react-query'
-import { authApi } from '../services/api'
+import { authApi, vmsApi, clustersApi } from '../services/api'
+import { useAuthStore } from '../stores/authStore'
 
 export default function DashboardPage() {
+  const { currentOrganization } = useAuthStore()
+
   const { data: userData, isLoading } = useQuery({
     queryKey: ['currentUser'],
     queryFn: authApi.getCurrentUser,
   })
+
+  const { data: vmsData } = useQuery({
+    queryKey: ['vms-stats', currentOrganization?.id],
+    queryFn: () => vmsApi.list({ per_page: 500 }),
+    enabled: !!currentOrganization,
+  })
+
+  const { data: clustersData } = useQuery({
+    queryKey: ['clusters-stats'],
+    queryFn: () => clustersApi.list({ per_page: 100, is_active: true }),
+  })
+
+  const allInstances = vmsData?.data ?? []
+  const totalVMs = allInstances.filter((v: any) => v.vm_type === 'qemu').length
+  const totalCTs = allInstances.filter((v: any) => v.vm_type === 'lxc').length
+  const runningVMs = allInstances.filter((v: any) => v.vm_type === 'qemu' && v.status === 'running').length
+  const runningCTs = allInstances.filter((v: any) => v.vm_type === 'lxc' && v.status === 'running').length
+  const activeClusters = clustersData?.total ?? 0
 
   if (isLoading) {
     return (
@@ -61,23 +82,35 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick stats */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 mb-6">
+      <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5 mb-6">
         <div className="bg-white overflow-hidden shadow rounded-lg">
           <div className="px-6 py-5">
             <dt className="text-sm font-medium text-gray-500 truncate">Total VMs</dt>
-            <dd className="mt-1 text-3xl font-semibold text-gray-900">0</dd>
+            <dd className="mt-1 text-3xl font-semibold text-gray-900">{totalVMs}</dd>
           </div>
         </div>
         <div className="bg-white overflow-hidden shadow rounded-lg">
           <div className="px-6 py-5">
             <dt className="text-sm font-medium text-gray-500 truncate">Running VMs</dt>
-            <dd className="mt-1 text-3xl font-semibold text-gray-900">0</dd>
+            <dd className="mt-1 text-3xl font-semibold text-green-600">{runningVMs}</dd>
+          </div>
+        </div>
+        <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="px-6 py-5">
+            <dt className="text-sm font-medium text-gray-500 truncate">Total CTs</dt>
+            <dd className="mt-1 text-3xl font-semibold text-gray-900">{totalCTs}</dd>
+          </div>
+        </div>
+        <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="px-6 py-5">
+            <dt className="text-sm font-medium text-gray-500 truncate">Running CTs</dt>
+            <dd className="mt-1 text-3xl font-semibold text-green-600">{runningCTs}</dd>
           </div>
         </div>
         <div className="bg-white overflow-hidden shadow rounded-lg">
           <div className="px-6 py-5">
             <dt className="text-sm font-medium text-gray-500 truncate">Active Clusters</dt>
-            <dd className="mt-1 text-3xl font-semibold text-gray-900">0</dd>
+            <dd className="mt-1 text-3xl font-semibold text-gray-900">{activeClusters}</dd>
           </div>
         </div>
       </div>

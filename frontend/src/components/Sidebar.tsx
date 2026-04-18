@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Server,
+  Box,
   HardDrive,
   Network,
   FileText,
@@ -33,6 +34,11 @@ export default function Sidebar() {
       name: 'Virtual Machines',
       path: '/vms',
       icon: <Server className="w-5 h-5" />
+    },
+    {
+      name: 'Containers',
+      path: '/containers',
+      icon: <Box className="w-5 h-5" />
     },
     {
       name: 'Proxmox Clusters',

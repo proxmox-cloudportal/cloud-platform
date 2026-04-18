@@ -1,6 +1,7 @@
 """
 Authentication endpoints for login, register, and token refresh.
 """
+import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,6 +10,8 @@ from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.user import User
+from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.schemas.user import (
     UserCreate,
     UserResponse,
@@ -80,6 +83,36 @@ async def register(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    # Get or create the default organization and add user as admin
+    result = await db.execute(
+        select(Organization).where(
+            Organization.slug == "default",
+            Organization.deleted_at.is_(None)
+        )
+    )
+    default_org = result.scalar_one_or_none()
+
+    if not default_org:
+        default_org = Organization(
+            id=str(uuid.uuid4()),
+            name="Default",
+            slug="default",
+            description="Default organization",
+            is_active=True,
+        )
+        db.add(default_org)
+        await db.flush()
+
+    membership = OrganizationMember(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        organization_id=default_org.id,
+        role="admin",
+        joined_at=datetime.utcnow(),
+    )
+    db.add(membership)
+    await db.commit()
 
     return user
 
